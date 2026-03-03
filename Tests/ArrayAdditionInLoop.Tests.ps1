@@ -426,6 +426,32 @@ foreach ($item in $data) {
             $r.Count | Should -Be 0
         }
 
+        It 'allows $total += $x.Count when $total = $null before loop (null accumulator)' {
+            $script = @'
+function Test-Fn {
+    $total = $null
+    foreach ($x in $data) {
+        $total += $x.Count
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 0
+        }
+
+        It 'allows $total = $total + $x.Count when $total = $null (Pass 2 null accumulator)' {
+            $script = @'
+function Test-Fn {
+    $total = $null
+    foreach ($x in $data) {
+        $total = $total + $x.Count
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 0
+        }
+
         It 'still flags $arr += $item when $arr = @() before loop (array, not numeric)' {
             $script = @'
 function Test-Fn {
@@ -572,6 +598,45 @@ function Test-Fn {
 '@
             $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
             $r.Count | Should -Be 1
+        }
+
+        It 'flags $s = $s + $x.Name + '' '' inside loop (nested plus chain)' {
+            $script = @'
+function Test-Fn {
+    $s = ''
+    foreach ($x in $data) {
+        $s = $s + $x.Name + ' '
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 1
+        }
+
+        It 'flags $s = $s + $x.Name + $x.Suffix + ''-'' (deeper nested plus chain)' {
+            $script = @'
+function Test-Fn {
+    $s = ''
+    foreach ($x in $data) {
+        $s = $s + $x.Name + $x.Suffix + '-'
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 1
+        }
+
+        It 'does not flag $total = $total + $x.A + $x.B when numeric accumulator' {
+            $script = @'
+function Test-Fn {
+    $total = 0
+    foreach ($x in $data) {
+        $total = $total + $x.A + $x.B
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 0
         }
 
         It 'flags $str += $char inside loop (string concat is also O(n^2))' {

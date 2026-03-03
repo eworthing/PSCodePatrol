@@ -79,6 +79,28 @@ function Measure-UnsafeCountProperty {
             return $false
         }
 
+        # ── Helper: does the RHS pipeline end with Group-Object -AsHashTable? ──
+        # Group-Object -AsHashTable always returns [Hashtable], whose .Count is
+        # a built-in property — safe on both PS 5.1 and 7+.
+        function Test-HasGroupObjectAsHashTable {
+            param([System.Management.Automation.Language.Ast]$Ast)
+            $commands = @($Ast.FindAll({
+                param($A)
+                $A -is [System.Management.Automation.Language.CommandAst]
+            }, $true))
+            foreach ($cmd in $commands) {
+                $name = $cmd.GetCommandName()
+                if ($name -eq 'Group-Object' -or $name -eq 'group') {
+                    $hasSwitch = $cmd.CommandElements | Where-Object {
+                        $_ -is [System.Management.Automation.Language.CommandParameterAst] -and
+                        $_.ParameterName -eq 'AsHashTable'
+                    }
+                    if ($hasSwitch) { return $true }
+                }
+            }
+            return $false
+        }
+
         # ── Analyze a single scope (function body or top-level script) ──
         # Uses offset-ordered walk: assignments and .Count accesses are merged into a
         # single list sorted by source position, then processed top-to-bottom. This
@@ -145,6 +167,9 @@ function Measure-UnsafeCountProperty {
 
                     if (Test-IsArrayWrapped $rhs) {
                         # Safe: @() wrapping guarantees array
+                        $unsafeVars.Remove($varName) | Out-Null
+                    } elseif (Test-HasGroupObjectAsHashTable $rhs) {
+                        # Group-Object -AsHashTable returns [Hashtable]; .Count is always safe
                         $unsafeVars.Remove($varName) | Out-Null
                     } elseif (Test-HasCommand $rhs) {
                         # Unsafe: command/pipeline without @()

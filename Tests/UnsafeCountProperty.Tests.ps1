@@ -217,6 +217,50 @@ function Test-Fn {
             $results.Count | Should -Be 0
         }
 
+        It 'allows .Count on Group-Object -AsHashTable result' {
+            $script = @'
+function Test-Fn {
+    $h = $data | Group-Object Name -AsHashTable
+    $h.Count
+}
+'@
+            $results = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $results.Count | Should -Be 0
+        }
+
+        It 'allows .Count on Group-Object -AsHashTable -AsString result' {
+            $script = @'
+function Test-Fn {
+    $h = $data | Group-Object Name -AsHashTable -AsString
+    $h.Count
+}
+'@
+            $results = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $results.Count | Should -Be 0
+        }
+
+        It 'allows .Count on group alias with -AsHashTable' {
+            $script = @'
+function Test-Fn {
+    $h = $data | group Name -AsHashTable
+    $h.Count
+}
+'@
+            $results = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $results.Count | Should -Be 0
+        }
+
+        It 'flags .Count on Group-Object without -AsHashTable (returns GroupInfo[])' {
+            $script = @'
+function Test-Fn {
+    $h = $data | Group-Object Name
+    $h.Count
+}
+'@
+            $results = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $results.Count | Should -Be 1
+        }
+
         It 'allows .Count on -split result (always returns string[])' {
             $script = @'
 function Test-Fn {

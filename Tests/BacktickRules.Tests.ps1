@@ -320,7 +320,31 @@ next line
             $results.Count | Should -Be 1
         }
 
+        It 'Flags uppercase N after backtick in bare argument (not an escape)' {
+            $code = 'Write-Host `N'
+            $results = Invoke-Rule -ScriptDefinition $code -RuleName 'Measure-AvoidBacktickObfuscationNoOpInIdentifier'
+            $results.Count | Should -Be 1
+        }
+
+        It 'Still flags obfuscation backtick in Identifier token (Ge`t-Process)' {
+            $code = 'Ge`t-Process'
+            $results = Invoke-Rule -ScriptDefinition $code -RuleName 'Measure-AvoidBacktickObfuscationNoOpInIdentifier'
+            $results.Count | Should -Be 1
+        }
+
         # --- True negatives: must NOT flag ---
+
+        It 'Does not flag `n escape in bare argument (Generic token)' {
+            $code = 'Write-Host `n'
+            $results = Invoke-Rule -ScriptDefinition $code -RuleName 'Measure-AvoidBacktickObfuscationNoOpInIdentifier'
+            $results.Count | Should -Be 0
+        }
+
+        It 'Does not flag `t escape in bare argument (Generic token)' {
+            $code = 'Write-Host `t'
+            $results = Invoke-Rule -ScriptDefinition $code -RuleName 'Measure-AvoidBacktickObfuscationNoOpInIdentifier'
+            $results.Count | Should -Be 0
+        }
 
         It 'Does not flag normal cmdlet names' {
             $code = 'Get-ChildItem -Path C:\Temp -Recurse'

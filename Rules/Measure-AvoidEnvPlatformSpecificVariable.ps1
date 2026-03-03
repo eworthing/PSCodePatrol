@@ -152,7 +152,7 @@ function Measure-AvoidEnvPlatformSpecificVariable {
                 }
                 $fix = New-CorrectionExtent @fixParams
 
-                $msg = "$originalText is not set on macOS/Linux — replace with $replacement. Autofix applied."
+                $msg = "$originalText is not set on macOS/Linux — replace with $replacement. Autofix available."
                 $results.Add((New-Diagnostic -Message $msg -Extent $varAst.Extent -Severity 'Error' -RuleName $ruleName -SuggestedCorrections @($fix)))
             }
             else {

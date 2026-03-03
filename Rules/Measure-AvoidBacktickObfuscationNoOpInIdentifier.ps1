@@ -66,6 +66,19 @@ function Measure-AvoidBacktickObfuscationNoOpInIdentifier {
 
             $fixes = [System.Collections.Generic.List[object]]::new()
             foreach ($m in $backtickMatches) {
+                # Skip known PowerShell escape sequences in bare-argument (Generic) tokens,
+                # but only when the backtick is NOT embedded in an identifier-like word.
+                # Escapes are case-sensitive: `n = newline, `N = literal N (no-op).
+                if ($tok.Kind -eq [System.Management.Automation.Language.TokenKind]::Generic) {
+                    $nextCharIdx = $m.Index + 1
+                    $prevIsWord  = $m.Index -gt 0 -and $t[$m.Index - 1] -match '\w'
+                    if (-not $prevIsWord -and
+                        $nextCharIdx -lt $t.Length -and
+                        @('0','a','b','e','f','n','r','t','v') -ccontains [string]$t[$nextCharIdx]) {
+                        continue
+                    }
+                }
+
                 $idx = $m.Index
 
                 $fixParams = @{
@@ -79,6 +92,9 @@ function Measure-AvoidBacktickObfuscationNoOpInIdentifier {
                 }
                 $fixes.Add((New-CorrectionExtent @fixParams))
             }
+
+            # All backtick matches were legitimate escape sequences — skip this token.
+            if ($fixes.Count -eq 0) { continue }
 
             $msg = @(
                 'CATEGORY: BacktickObfuscation.NoOpInIdentifier.',

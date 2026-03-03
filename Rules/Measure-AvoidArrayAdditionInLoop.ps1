@@ -195,6 +195,13 @@ function Measure-AvoidArrayAdditionInLoop {
                             return $true
                         }
                     }
+                    # Also accept $null as accumulator initialiser.
+                    # $null + <int> produces <int>; $null + <string> produces <string>.
+                    # This is the common pattern for accumulators whose initial type is unknown.
+                    if ($innerExpr -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $innerExpr.VariablePath.UserPath -eq 'null') {
+                        return $true
+                    }
                 }
             }
             return $false
@@ -228,6 +235,25 @@ function Measure-AvoidArrayAdditionInLoop {
             $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
         }
 
+        # Helper: walks a Plus-operator chain to find a specific variable at any depth.
+        # E.g. ($x + $a) + $b — finds $x by recursing into the left BinaryExpressionAst.
+        function Find-VariableInPlusChain {
+            param(
+                [System.Management.Automation.Language.Ast]$Expr,
+                [string]$VariablePath
+            )
+            if ($Expr -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $Expr.VariablePath.UserPath -eq $VariablePath) {
+                return $true
+            }
+            if ($Expr -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+                $Expr.Operator -eq [System.Management.Automation.Language.TokenKind]::Plus) {
+                if (Find-VariableInPlusChain -Expr $Expr.Left -VariablePath $VariablePath) { return $true }
+                if (Find-VariableInPlusChain -Expr $Expr.Right -VariablePath $VariablePath) { return $true }
+            }
+            return $false
+        }
+
         # --- Pass 2: $var = $var + $expr (equivalent form) ---
         $equalsOp = [System.Management.Automation.Language.TokenKind]::Equals
         $equalsAssigns = $ScriptBlockAst.FindAll({
@@ -248,6 +274,8 @@ function Measure-AvoidArrayAdditionInLoop {
             if ($expr.Operator -ne [System.Management.Automation.Language.TokenKind]::Plus) { continue }
 
             $lhsPath = $assign.Left.VariablePath.UserPath
+
+            # --- Try simple match: $var = $var + $expr ---
             $otherOperand = $null
             if ($expr.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
                 $expr.Left.VariablePath.UserPath -eq $lhsPath) {
@@ -256,20 +284,26 @@ function Measure-AvoidArrayAdditionInLoop {
                 $expr.Right.VariablePath.UserPath -eq $lhsPath) {
                 $otherOperand = $expr.Left
             }
-            if ($null -eq $otherOperand) { continue }
 
-            # Skip numeric constant additions (O(1) arithmetic, same as $var += 1).
-            if ($otherOperand -is [System.Management.Automation.Language.ConstantExpressionAst]) {
-                $val = $otherOperand.Value
-                if ($val -is [int] -or $val -is [long] -or $val -is [double] -or $val -is [decimal]) {
-                    continue
+            if ($null -ne $otherOperand) {
+                # Skip numeric constant additions (O(1) arithmetic, same as $var += 1).
+                if ($otherOperand -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                    $val = $otherOperand.Value
+                    if ($val -is [int] -or $val -is [long] -or $val -is [double] -or $val -is [decimal]) {
+                        continue
+                    }
                 }
+
+                # Skip numeric accumulators ($total = 0 before loop, then $total = $total + $obj.Count).
+                if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
+
+                $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
+            } elseif (Find-VariableInPlusChain -Expr $expr -VariablePath $lhsPath) {
+                # Nested chain: $var = $var + $a + $b  (BinaryExpressionAst nesting)
+                # No single "other operand" to check, rely on accumulator heuristic only.
+                if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
+                $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
             }
-
-            # Skip numeric accumulators ($total = 0 before loop, then $total = $total + $obj.Count).
-            if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
-
-            $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
         }
 
         return $results.ToArray()

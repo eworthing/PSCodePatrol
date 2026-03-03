@@ -10,3 +10,4 @@
 
 # PowerShell
 *.ps1xml
+Temp/

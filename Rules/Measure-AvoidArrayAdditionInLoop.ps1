@@ -154,11 +154,62 @@ function Measure-AvoidArrayAdditionInLoop {
                     $AssignAst.Extent.EndOffset   -le $iter.Extent.EndOffset)
         }
 
-        # Helper: returns $true when the variable is initialised with a numeric
-        # literal (e.g. $total = 0) in the same scope before the loop.  This
-        # identifies numeric accumulators so that $total += $obj.Count (O(1)
-        # integer addition) is not flagged as array accumulation.
-        function Test-NumericAccumulator {
+        # Helper: returns $true if an expression references the target variable path.
+        function Test-ExprReferencesVariable {
+            param(
+                [System.Management.Automation.Language.Ast]$ExprAst,
+                [string]$VariablePath
+            )
+            if ($null -eq $ExprAst) { return $false }
+            $refs = $ExprAst.FindAll({
+                param($a)
+                $a -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $a.VariablePath.UserPath -eq $VariablePath
+            }, $true)
+            return (@($refs).Count -gt 0)
+        }
+
+        # Helper: skip one-shot in-loop string/array shaping when the variable was
+        # explicitly reinitialised in the same loop body before the append.
+        # Example:
+        #   foreach (...) {
+        #     $dtStr = $parts[$colDate]
+        #     if ($hasTime) { $dtStr += ' ' + $parts[$colTime] }  # suppress
+        #   }
+        function Test-LoopLocalReinitializationBeforeAppend {
+            param(
+                [string]$VariablePath,
+                [System.Management.Automation.Language.AssignmentStatementAst]$CurrentAssign,
+                [System.Management.Automation.Language.Ast]$LoopAncestor
+            )
+            if ($null -eq $CurrentAssign -or $null -eq $LoopAncestor) { return $false }
+            $currentStart = $CurrentAssign.Extent.StartOffset
+            $loopStart = $LoopAncestor.Extent.StartOffset
+
+            $priorAssigns = @($LoopAncestor.FindAll({
+                param($a)
+                $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $a.Left.VariablePath.UserPath -eq $VariablePath -and
+                $a.Extent.StartOffset -gt $loopStart -and
+                $a.Extent.EndOffset -lt $currentStart
+            }, $true) | Sort-Object { $_.Extent.EndOffset })
+
+            if ($priorAssigns.Count -eq 0) { return $false }
+
+            $lastAssign = $priorAssigns[-1]
+            $eqOp = [System.Management.Automation.Language.TokenKind]::Equals
+            if ($lastAssign.Operator -ne $eqOp) { return $false }
+
+            # If the initializer already references the same variable ($x = $x + ...),
+            # that's still accumulation and should not be suppressed.
+            if (Test-ExprReferencesVariable -ExprAst $lastAssign.Right -VariablePath $VariablePath) { return $false }
+
+            return $true
+        }
+
+        # Helper: finds assignments to the variable in the same scope before loop start.
+        function Get-PreLoopAssignments {
             param(
                 [string]$VariablePath,
                 [System.Management.Automation.Language.Ast]$LoopAncestor
@@ -173,20 +224,30 @@ function Measure-AvoidArrayAdditionInLoop {
                 }
                 $scope = $scope.Parent
             }
-            if ($null -eq $scope) { return $false }
+            if ($null -eq $scope) { return @() }
 
             $eqOp = [System.Management.Automation.Language.TokenKind]::Equals
             $loopStart = $LoopAncestor.Extent.StartOffset
-            $scopeAssigns = $scope.FindAll({
+            return @($scope.FindAll({
                 param($a)
                 $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
                 $a.Operator -eq $eqOp -and
                 $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
                 $a.Left.VariablePath.UserPath -eq $VariablePath -and
                 $a.Extent.EndOffset -lt $loopStart
-            }, $true)
+            }, $true))
+        }
 
-            foreach ($init in $scopeAssigns) {
+        # Helper: returns $true when the variable is initialised with a numeric
+        # literal (e.g. $total = 0) in the same scope before the loop.  This
+        # identifies numeric accumulators so that $total += $obj.Count (O(1)
+        # integer addition) is not flagged as array accumulation.
+        function Test-NumericAccumulator {
+            param(
+                [string]$VariablePath,
+                [System.Management.Automation.Language.Ast]$LoopAncestor
+            )
+            foreach ($init in (Get-PreLoopAssignments -VariablePath $VariablePath -LoopAncestor $LoopAncestor)) {
                 if ($init.Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
                     $innerExpr = $init.Right.Expression
                     if ($innerExpr -is [System.Management.Automation.Language.ConstantExpressionAst]) {
@@ -195,15 +256,89 @@ function Measure-AvoidArrayAdditionInLoop {
                             return $true
                         }
                     }
-                    # Also accept $null as accumulator initialiser.
-                    # $null + <int> produces <int>; $null + <string> produces <string>.
-                    # This is the common pattern for accumulators whose initial type is unknown.
+                }
+            }
+            return $false
+        }
+
+        # Helper: returns $true when the variable is explicitly initialised with $null
+        # before the loop in the same scope.
+        function Test-NullAccumulatorInitializer {
+            param(
+                [string]$VariablePath,
+                [System.Management.Automation.Language.Ast]$LoopAncestor
+            )
+            foreach ($init in (Get-PreLoopAssignments -VariablePath $VariablePath -LoopAncestor $LoopAncestor)) {
+                if ($init.Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    $innerExpr = $init.Right.Expression
                     if ($innerExpr -is [System.Management.Automation.Language.VariableExpressionAst] -and
                         $innerExpr.VariablePath.UserPath -eq 'null') {
                         return $true
                     }
                 }
             }
+            return $false
+        }
+
+        # Helper: syntactic numeric heuristic used only for null-initialised
+        # accumulators so we can keep avoiding obvious numeric counters without
+        # suppressing true array/string accumulation.
+        function Test-ObviouslyNumericExpression {
+            param(
+                [System.Management.Automation.Language.Ast]$Expr,
+                [string]$AccumulatorVariablePath
+            )
+
+            if ($null -eq $Expr) { return $false }
+
+            if ($Expr -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                return (Test-ObviouslyNumericExpression -Expr $Expr.Expression -AccumulatorVariablePath $AccumulatorVariablePath)
+            }
+            if ($Expr -is [System.Management.Automation.Language.ParenExpressionAst]) {
+                return (Test-ObviouslyNumericExpression -Expr $Expr.Pipeline -AccumulatorVariablePath $AccumulatorVariablePath)
+            }
+            if ($Expr -is [System.Management.Automation.Language.PipelineAst]) {
+                if ($Expr.PipelineElements.Count -ne 1) { return $false }
+                $only = $Expr.PipelineElements[0]
+                if ($only -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    return (Test-ObviouslyNumericExpression -Expr $only.Expression -AccumulatorVariablePath $AccumulatorVariablePath)
+                }
+                return $false
+            }
+
+            if ($Expr -is [System.Management.Automation.Language.ConstantExpressionAst]) {
+                $v = $Expr.Value
+                return ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal])
+            }
+
+            if ($Expr -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                return ($Expr.VariablePath.UserPath -eq $AccumulatorVariablePath)
+            }
+
+            if ($Expr -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                $Expr.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                $memberName = $Expr.Member.Value
+                if ($memberName -match '^(?i)(count|length|capacity|size|sum|total|numberof[a-z0-9_]*)$') {
+                    return $true
+                }
+            }
+
+            if ($Expr -is [System.Management.Automation.Language.BinaryExpressionAst]) {
+                $numericOps = @(
+                    [System.Management.Automation.Language.TokenKind]::Plus,
+                    [System.Management.Automation.Language.TokenKind]::Minus,
+                    [System.Management.Automation.Language.TokenKind]::Multiply,
+                    [System.Management.Automation.Language.TokenKind]::Divide,
+                    [System.Management.Automation.Language.TokenKind]::Rem
+                )
+                if ($numericOps -contains $Expr.Operator) {
+                    return (
+                        (Test-ObviouslyNumericExpression -Expr $Expr.Left -AccumulatorVariablePath $AccumulatorVariablePath) -and
+                        (Test-ObviouslyNumericExpression -Expr $Expr.Right -AccumulatorVariablePath $AccumulatorVariablePath)
+                    )
+                }
+            }
+
             return $false
         }
 
@@ -231,6 +366,13 @@ function Measure-AvoidArrayAdditionInLoop {
             # 1d: Skip numeric accumulators ($total = 0 before loop, then $total += $obj.Count).
             $varPath = $assign.Left.VariablePath.UserPath
             if (Test-NumericAccumulator -VariablePath $varPath -LoopAncestor $loopAncestor) { continue }
+            if (Test-NullAccumulatorInitializer -VariablePath $varPath -LoopAncestor $loopAncestor) {
+                if ($assign.Right -is [System.Management.Automation.Language.CommandExpressionAst] -and
+                    (Test-ObviouslyNumericExpression -Expr $assign.Right.Expression -AccumulatorVariablePath $varPath)) {
+                    continue
+                }
+            }
+            if (Test-LoopLocalReinitializationBeforeAppend -VariablePath $varPath -CurrentAssign $assign -LoopAncestor $loopAncestor) { continue }
 
             $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
         }
@@ -296,12 +438,20 @@ function Measure-AvoidArrayAdditionInLoop {
 
                 # Skip numeric accumulators ($total = 0 before loop, then $total = $total + $obj.Count).
                 if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
+                if (Test-NullAccumulatorInitializer -VariablePath $lhsPath -LoopAncestor $loopAncestor) {
+                    if (Test-ObviouslyNumericExpression -Expr $otherOperand -AccumulatorVariablePath $lhsPath) { continue }
+                }
+                if (Test-LoopLocalReinitializationBeforeAppend -VariablePath $lhsPath -CurrentAssign $assign -LoopAncestor $loopAncestor) { continue }
 
                 $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
             } elseif (Find-VariableInPlusChain -Expr $expr -VariablePath $lhsPath) {
                 # Nested chain: $var = $var + $a + $b  (BinaryExpressionAst nesting)
                 # No single "other operand" to check, rely on accumulator heuristic only.
                 if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
+                if (Test-NullAccumulatorInitializer -VariablePath $lhsPath -LoopAncestor $loopAncestor) {
+                    if (Test-ObviouslyNumericExpression -Expr $expr -AccumulatorVariablePath $lhsPath) { continue }
+                }
+                if (Test-LoopLocalReinitializationBeforeAppend -VariablePath $lhsPath -CurrentAssign $assign -LoopAncestor $loopAncestor) { continue }
                 $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
             }
         }

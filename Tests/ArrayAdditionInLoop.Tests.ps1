@@ -426,7 +426,7 @@ foreach ($item in $data) {
             $r.Count | Should -Be 0
         }
 
-        It 'allows $total += $x.Count when $total = $null before loop (null accumulator)' {
+        It 'allows $total += $x.Count when $total = $null before loop (null numeric accumulator)' {
             $script = @'
 function Test-Fn {
     $total = $null
@@ -439,7 +439,7 @@ function Test-Fn {
             $r.Count | Should -Be 0
         }
 
-        It 'allows $total = $total + $x.Count when $total = $null (Pass 2 null accumulator)' {
+        It 'allows $total = $total + $x.Count when $total = $null (Pass 2 null numeric accumulator)' {
             $script = @'
 function Test-Fn {
     $total = $null
@@ -450,6 +450,89 @@ function Test-Fn {
 '@
             $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
             $r.Count | Should -Be 0
+        }
+
+        It 'allows $n = $n + $cpu.NumberOfCores when $n = $null (numeric-like member name)' {
+            $script = @'
+function Test-Fn {
+    $n = $null
+    foreach ($cpu in $cpuInfo) {
+        $n = $n + $cpu.NumberOfCores
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 0
+        }
+
+        It 'flags $arr += $item when $arr = $null before loop (null does not imply numeric)' {
+            $script = @'
+function Test-Fn {
+    $arr = $null
+    foreach ($item in $items) {
+        $arr += $item
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 1
+        }
+
+        It 'flags $arr = $arr + $item when $arr = $null before loop (Pass 2)' {
+            $script = @'
+function Test-Fn {
+    $arr = $null
+    foreach ($item in $items) {
+        $arr = $arr + $item
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 1
+        }
+
+        It 'does not flag one-shot += after loop-local reinitialization (date+time combine)' {
+            $script = @'
+function Test-Fn {
+    foreach ($parts in $rows) {
+        $dtStr = $parts[0]
+        if ($parts.Count -gt 1) {
+            $dtStr += ' ' + $parts[1]
+        }
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 0
+        }
+
+        It 'does not flag one-shot Pass 2 append after loop-local reinitialization' {
+            $script = @'
+function Test-Fn {
+    foreach ($parts in $rows) {
+        $dtStr = $parts[0]
+        if ($parts.Count -gt 1) {
+            $dtStr = $dtStr + ' ' + $parts[1]
+        }
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -Be 0
+        }
+
+        It 'still flags repeated += after loop-local reinitialization' {
+            $script = @'
+function Test-Fn {
+    foreach ($parts in $rows) {
+        $s = ''
+        $s += $parts[0]
+        $s += $parts[1]
+    }
+}
+'@
+            $r = @(Invoke-ScriptAnalyzer -ScriptDefinition $script -Settings $Script:TempSettings)
+            $r.Count | Should -BeGreaterThan 0
         }
 
         It 'still flags $arr += $item when $arr = @() before loop (array, not numeric)' {

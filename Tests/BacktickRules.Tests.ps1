@@ -6,9 +6,23 @@ param()
 
 Describe 'Backtick PSScriptAnalyzer custom rules' {
     BeforeAll {
-        $GitRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '../..')
-        $modulePath = Join-Path -Path $GitRoot -ChildPath 'PSCodePatrol/PSCodePatrol.psm1'
-        $settingsPath = Join-Path -Path $GitRoot -ChildPath 'PSScriptAnalyzerSettings.psd1'
+        $Script:RepoRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..')
+        $Script:ModulePath = Join-Path -Path $Script:RepoRoot -ChildPath 'PSCodePatrol.psm1'
+        $Script:TempSettings = Join-Path ([IO.Path]::GetTempPath()) "pssa_backtick_$PID.psd1"
+
+        @"
+@{
+    CustomRulePath = '$($Script:ModulePath -replace "'","''")'
+    IncludeRules   = @(
+        'Measure-AvoidBacktickLineContinuation',
+        'Measure-AvoidBacktickBrokenContinuationAttempt',
+        'Measure-AvoidBacktickObfuscationNoOpInIdentifier',
+        'Measure-AvoidArrayAdditionInLoop',
+        'Measure-AvoidEnvPlatformSpecificVariable',
+        'Measure-RequireConvertToJsonDepth'
+    )
+}
+"@ | Set-Content -Path $Script:TempSettings -Encoding UTF8
 
         # Helper: run a single custom rule against inline code.
         # Uses -Settings @{} to suppress auto-discovery of the project
@@ -20,8 +34,12 @@ Describe 'Backtick PSScriptAnalyzer custom rules' {
                 [Parameter(Mandatory)]
                 [string]$RuleName
             )
-            @(Invoke-ScriptAnalyzer -ScriptDefinition $ScriptDefinition -CustomRulePath $modulePath -IncludeRule $RuleName -Settings @{})
+            @(Invoke-ScriptAnalyzer -ScriptDefinition $ScriptDefinition -CustomRulePath $Script:ModulePath -IncludeRule $RuleName -Settings @{})
         }
+    }
+
+    AfterAll {
+        if (Test-Path $Script:TempSettings) { Remove-Item $Script:TempSettings -Force }
     }
 
     # ================================================================
@@ -397,29 +415,29 @@ Get-ChildItem
     # ================================================================
     # Integration: settings file enables all three rules
     # ================================================================
-    Context 'Integration with PSScriptAnalyzerSettings.psd1' {
+    Context 'Integration with settings file' {
         It 'Settings file includes all three backtick rules' {
-            $settings = Import-PowerShellDataFile -Path $settingsPath
+            $settings = Import-PowerShellDataFile -Path $Script:TempSettings
             $settings.IncludeRules | Should -Contain 'Measure-AvoidBacktickLineContinuation'
             $settings.IncludeRules | Should -Contain 'Measure-AvoidBacktickBrokenContinuationAttempt'
             $settings.IncludeRules | Should -Contain 'Measure-AvoidBacktickObfuscationNoOpInIdentifier'
         }
 
         It 'Settings file includes all three new rules' {
-            $settings = Import-PowerShellDataFile -Path $settingsPath
+            $settings = Import-PowerShellDataFile -Path $Script:TempSettings
             $settings.IncludeRules | Should -Contain 'Measure-AvoidArrayAdditionInLoop'
             $settings.IncludeRules | Should -Contain 'Measure-AvoidEnvPlatformSpecificVariable'
             $settings.IncludeRules | Should -Contain 'Measure-RequireConvertToJsonDepth'
         }
 
         It 'Settings file references the PSCodePatrol module path' {
-            $settings = Import-PowerShellDataFile -Path $settingsPath
-            $settings.CustomRulePath | Should -Contain './PSCodePatrol'
+            $settings = Import-PowerShellDataFile -Path $Script:TempSettings
+            $settings.CustomRulePath | Should -Contain $Script:ModulePath
         }
 
         It 'Running via settings file catches a backtick continuation' {
             $code = "Get-ChildItem ```n    -Recurse"
-            $results = @(Invoke-ScriptAnalyzer -ScriptDefinition $code -Settings $settingsPath)
+            $results = @(Invoke-ScriptAnalyzer -ScriptDefinition $code -Settings $Script:TempSettings)
             $backtickResults = $results | Where-Object {
                 $_.RuleName -like '*BacktickLineContinuation*'
             }
@@ -427,7 +445,7 @@ Get-ChildItem
         }
 
         It 'PSMisleadingBacktick is NOT in IncludeRules (superseded)' {
-            $settings = Import-PowerShellDataFile -Path $settingsPath
+            $settings = Import-PowerShellDataFile -Path $Script:TempSettings
             $settings.IncludeRules | Should -Not -Contain 'PSMisleadingBacktick'
         }
     }

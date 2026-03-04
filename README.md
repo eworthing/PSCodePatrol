@@ -4,37 +4,71 @@ Custom [PSScriptAnalyzer](https://github.com/PowerShell/PSScriptAnalyzer) rules 
 
 ## Installation
 
+### Requirements
+
+- PowerShell 5.1+ (`powershell.exe` or `pwsh`)
+- [PSScriptAnalyzer](https://github.com/PowerShell/PSScriptAnalyzer)
+
+### Quick install (git)
+
 ```powershell
 git clone https://github.com/eworthing/PSCodePatrol.git
 ```
+
+> You don’t need to `Import-Module` for PSScriptAnalyzer custom rules.
+> Just point `-CustomRulePath` at the cloned folder.
+
+<details>
+<summary>Alternative clone options</summary>
+
+```powershell
+# If you prefer GitHub CLI:
+gh repo clone eworthing/PSCodePatrol
+```
+
+```powershell
+# SSH:
+git clone git@github.com:eworthing/PSCodePatrol.git
+```
+
+</details>
 
 ## Usage
 
 Run all rules against a script:
 
 ```powershell
-Invoke-ScriptAnalyzer -Path ./MyScript.ps1 -CustomRulePath ./PSCodePatrol
+$analyzerParams = @{
+    Path           = './MyScript.ps1'
+    CustomRulePath = './PSCodePatrol'
+}
+Invoke-ScriptAnalyzer @analyzerParams
 ```
 
 Run a specific rule:
 
 ```powershell
-Invoke-ScriptAnalyzer -Path ./MyScript.ps1 -CustomRulePath ./PSCodePatrol -IncludeRule Measure-AvoidArrayAdditionInLoop
+$analyzerParams = @{
+    Path           = './MyScript.ps1'
+    CustomRulePath = './PSCodePatrol'
+    IncludeRule    = 'Measure-AvoidArrayAdditionInLoop'
+}
+Invoke-ScriptAnalyzer @analyzerParams
 ```
 
 Use in a `PSScriptAnalyzerSettings.psd1` config file:
 
 ```powershell
 @{
-    CustomRulePath = @('./PSCodePatrol')
-    IncludeDefaultRules = $true
+    CustomRulePath        = @('./PSCodePatrol')
+    IncludeDefaultRules   = $true
 }
 ```
 
 Then invoke with:
 
 ```powershell
-Invoke-ScriptAnalyzer -Path ./MyScript.ps1 -Settings ./PSScriptAnalyzerSettings.psd1
+Invoke-ScriptAnalyzer -Path './MyScript.ps1' -Settings './PSScriptAnalyzerSettings.psd1'
 ```
 
 ## Rules
@@ -136,11 +170,6 @@ if ($users.Count -gt 0) { ... }
 $users = @(Get-ADUser -Filter *)
 if ($users.Count -gt 0) { ... }
 ```
-
-## Requirements
-
-- PowerShell 5.1 or later
-- [PSScriptAnalyzer](https://github.com/PowerShell/PSScriptAnalyzer) module
 
 ## Running Tests
 

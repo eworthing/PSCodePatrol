@@ -11,3 +11,5 @@
 # PowerShell
 *.ps1xml
 Temp/
+out/
+testResults.xml

@@ -1,0 +1,157 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    environment: psgallery
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PowerShellGet -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module -Name Pester -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Ensure tag commit is on main
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Release tag commit must be reachable from origin/main.'
+          }
+
+      - name: Validate tag matches module version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Release tags must match vX.Y.Z format. Received: $tag"
+          }
+
+          $manifest = Import-PowerShellDataFile -Path ./PSCodePatrol.psd1
+          $moduleVersion = [string]$manifest.ModuleVersion
+          if ($tag -ne "v$moduleVersion") {
+            throw "Tag $tag does not match ModuleVersion $moduleVersion"
+          }
+
+      - name: Validate module and tests
+        shell: pwsh
+        run: |
+          Test-ModuleManifest -Path ./PSCodePatrol.psd1 | Out-Null
+          ./tools/Test-ExportConsistency.ps1
+
+          $targets = @(
+            './PSCodePatrol.psm1'
+            './Private'
+            './Rules'
+          )
+
+          $results = foreach ($target in $targets) {
+            Invoke-ScriptAnalyzer -Path $target -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          }
+          $errors = @($results | Where-Object Severity -eq 'Error')
+
+          if ($errors.Count -gt 0) {
+            $errors | Format-Table -AutoSize | Out-String | Write-Host
+            throw 'PSScriptAnalyzer reported error-level findings.'
+          }
+
+          Invoke-Pester -Path ./Tests -CI -Output Detailed
+
+      - name: Stage module
+        shell: pwsh
+        run: |
+          ./tools/Stage-Module.ps1 -OutDir ./out/PSCodePatrol
+          Test-ModuleManifest -Path ./out/PSCodePatrol/PSCodePatrol.psd1 | Out-Null
+
+      - name: Sign module files
+        shell: pwsh
+        env:
+          CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CODESIGN_PFX_BASE64)) {
+            throw 'Missing required secret: CODESIGN_PFX_BASE64'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CODESIGN_PFX_PASSWORD)) {
+            throw 'Missing required secret: CODESIGN_PFX_PASSWORD'
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64))
+          $pfxPassword = ConvertTo-SecureString $env:CODESIGN_PFX_PASSWORD -AsPlainText -Force
+
+          ./tools/Sign-Module.ps1 -ModuleRoot ./out/PSCodePatrol -PfxPath $pfxPath -PfxPassword $pfxPassword
+
+      - name: Publish to PowerShell Gallery
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+            throw 'Missing required secret: PSGALLERY_API_KEY'
+          }
+
+          $manifest = Import-PowerShellDataFile -Path ./out/PSCodePatrol/PSCodePatrol.psd1
+          $psdata = $manifest.PrivateData.PSData
+
+          $publishParams = @{
+            Path = './out/PSCodePatrol'
+            Repository = 'PSGallery'
+            NuGetApiKey = $env:PSGALLERY_API_KEY
+            Force = $true
+            SkipAutomaticTags = $true
+          }
+
+          if ($null -ne $psdata.Tags -and $psdata.Tags.Count -gt 0) {
+            $publishParams.Tags = @($psdata.Tags)
+          }
+          if (-not [string]::IsNullOrWhiteSpace([string]$psdata.ProjectUri)) {
+            $publishParams.ProjectUri = [Uri]$psdata.ProjectUri
+          }
+          if (-not [string]::IsNullOrWhiteSpace([string]$psdata.LicenseUri)) {
+            $publishParams.LicenseUri = [Uri]$psdata.LicenseUri
+          }
+          if (-not [string]::IsNullOrWhiteSpace([string]$psdata.ReleaseNotes)) {
+            $publishParams.ReleaseNotes = @([string]$psdata.ReleaseNotes)
+          }
+
+          Publish-Module @publishParams
+
+      - name: Post-publish smoke check
+        shell: pwsh
+        run: |
+          $result = $null
+          for ($i = 1; $i -le 8; $i++) {
+            try {
+              $result = Find-Module -Name PSCodePatrol -Repository PSGallery -ErrorAction Stop
+              if ($null -ne $result) {
+                break
+              }
+            }
+            catch {
+              Start-Sleep -Seconds 20
+            }
+          }
+
+          if ($null -eq $result) {
+            throw 'Unable to find PSCodePatrol in PSGallery after publish.'
+          }
+
+          $result | Format-List Name, Version, Repository

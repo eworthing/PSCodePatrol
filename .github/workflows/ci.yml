@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Validate manifest
+        shell: pwsh
+        run: |
+          Test-ModuleManifest -Path ./PSCodePatrol.psd1 | Out-Null
+
+      - name: Validate exported rules consistency
+        shell: pwsh
+        run: |
+          ./tools/Test-ExportConsistency.ps1
+
+      - name: PSScriptAnalyzer (fail on Error)
+        shell: pwsh
+        run: |
+          $targets = @(
+            './PSCodePatrol.psm1'
+            './Private'
+            './Rules'
+          )
+
+          $results = foreach ($target in $targets) {
+            Invoke-ScriptAnalyzer -Path $target -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          }
+          $errors = @($results | Where-Object Severity -eq 'Error')
+
+          if ($errors.Count -gt 0) {
+            $errors | Format-Table -AutoSize | Out-String | Write-Host
+            throw 'PSScriptAnalyzer reported error-level findings.'
+          }
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          Invoke-Pester -Path ./Tests -CI -Output Detailed
+
+      - name: Stage package and re-validate manifest
+        shell: pwsh
+        run: |
+          ./tools/Stage-Module.ps1 -OutDir ./out/PSCodePatrol
+          Test-ModuleManifest -Path ./out/PSCodePatrol/PSCodePatrol.psd1 | Out-Null

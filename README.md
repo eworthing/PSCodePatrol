@@ -9,6 +9,12 @@ Custom [PSScriptAnalyzer](https://github.com/PowerShell/PSScriptAnalyzer) rules 
 - PowerShell 5.1+ (`powershell.exe` or `pwsh`)
 - [PSScriptAnalyzer](https://github.com/PowerShell/PSScriptAnalyzer)
 
+### Install from PSGallery (recommended)
+
+```powershell
+Install-Module PSCodePatrol -Repository PSGallery -Scope CurrentUser
+```
+
 ### Quick install (git)
 
 ```powershell
@@ -176,6 +182,24 @@ if ($users.Count -gt 0) { ... }
 ```powershell
 Invoke-Pester ./Tests -Output Detailed
 ```
+
+## Maintainer Validation
+
+```powershell
+Test-ModuleManifest -Path ./PSCodePatrol.psd1
+./tools/Test-ExportConsistency.ps1
+$targets = './PSCodePatrol.psm1', './Private', './Rules'
+$results = foreach ($target in $targets) { Invoke-ScriptAnalyzer -Path $target -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 }
+$results | Where-Object Severity -eq 'Error'
+Invoke-Pester -Path ./Tests -CI -Output Detailed
+./tools/Stage-Module.ps1 -OutDir ./out/PSCodePatrol
+Test-ModuleManifest -Path ./out/PSCodePatrol/PSCodePatrol.psd1
+```
+
+## Release Process
+
+- See [docs/RELEASE.md](docs/RELEASE.md) for the tag-driven signed publish flow.
+- See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## License
 

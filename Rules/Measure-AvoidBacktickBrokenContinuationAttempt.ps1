@@ -75,18 +75,33 @@ function Measure-AvoidBacktickBrokenContinuationAttempt {
             if (IsIgnoredOffset -Offset $m.Index) { continue }
 
             # Create a precise extent pointing at the backtick character itself.
-            $extent = New-ScriptExtentFromOffset -Text $text -Offset $m.Index -Length 1 -FilePath $filePath
+            $extent = Get-ScriptExtentFromOffset -Text $text -Offset $m.Index -Length 1 -FilePath $filePath
 
             $msg = @(
                 'CATEGORY: BacktickLineContinuation.BrokenAttempt.',
                 'POLICY: Do not use backtick (`) for line continuation.',
-                'DETAIL: Trailing whitespace after the backtick means this is NOT a valid continuation and can hide errors.',
-                'ACTION: Remove the backtick and the trailing whitespace, then refactor using natural line breaks or splatting.',
-                'REFACTOR_HINTS: Break after | / operators / commas / opening (, {, [; use splatting ($p=@{...}; Cmdlet @p); use grouping constructs (), @(), @{}.',
+                (
+                    'DETAIL: Trailing whitespace after the backtick means this is NOT a valid continuation ' +
+                    'and can hide errors.'
+                ),
+                (
+                    'ACTION: Remove the backtick and the trailing whitespace, then refactor using natural ' +
+                    'line breaks or splatting.'
+                ),
+                (
+                    'REFACTOR_HINTS: Break after | / operators / commas / opening (, {, [; use splatting ' +
+                    '($p=@{...}; Cmdlet @p); use grouping constructs (), @(), @{}.'
+                ),
                 'AUTOFIX: No (guidance only; avoid auto-edit).'
             ) -join ' '
 
-            $results.Add((New-Diagnostic -Message $msg -Extent $extent -Severity 'Warning' -RuleName $ruleName))
+            $diagParams = @{
+                Message  = $msg
+                Extent   = $extent
+                Severity = 'Warning'
+                RuleName = $ruleName
+            }
+            $results.Add((ConvertTo-DiagnosticRecord @diagParams))
         }
 
         return $results.ToArray()

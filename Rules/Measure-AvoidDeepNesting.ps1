@@ -35,12 +35,13 @@ function Measure-AvoidDeepNesting {
         [System.Management.Automation.Language.ScriptBlockAst]$ScriptBlockAst
     )
 
-	    $maxAllowedDepth = 4
-	    $ruleName = 'Measure-AvoidDeepNesting'
-	    $diagnostics = New-Object System.Collections.Generic.List[object]
+    $maxAllowedDepth = 4
+    $ruleName = 'Measure-AvoidDeepNesting'
+    $diagnostics = New-Object System.Collections.Generic.List[object]
 
     function Get-MaxControlFlowDepth {
         [CmdletBinding()]
+        [OutputType([int])]
         param(
             [Parameter(Mandatory)]
             [System.Management.Automation.Language.ScriptBlockAst]$BodyAst
@@ -48,7 +49,7 @@ function Measure-AvoidDeepNesting {
 
         $script:MaxDepth = 0
 
-        function Visit-StatementBlock {
+        function Invoke-StatementBlockTraversal {
             param(
                 [System.Management.Automation.Language.StatementBlockAst]$Block,
                 [int]$Depth
@@ -61,11 +62,11 @@ function Measure-AvoidDeepNesting {
             }
 
             foreach ($Statement in $Block.Statements) {
-                Visit-Statement -Ast $Statement -Depth $Depth
+                Invoke-StatementTraversal -Ast $Statement -Depth $Depth
             }
         }
 
-        function Visit-Statement {
+        function Invoke-StatementTraversal {
             param(
                 [System.Management.Automation.Language.Ast]$Ast,
                 [int]$Depth
@@ -75,11 +76,11 @@ function Measure-AvoidDeepNesting {
 
             if ($Ast -is [System.Management.Automation.Language.IfStatementAst]) {
                 foreach ($Clause in $Ast.Clauses) {
-                    Visit-StatementBlock -Block $Clause.Item2 -Depth ($Depth + 1)
+                    Invoke-StatementBlockTraversal -Block $Clause.Item2 -Depth ($Depth + 1)
                 }
 
                 if ($Ast.ElseClause) {
-                    Visit-StatementBlock -Block $Ast.ElseClause -Depth ($Depth + 1)
+                    Invoke-StatementBlockTraversal -Block $Ast.ElseClause -Depth ($Depth + 1)
                 }
 
                 return
@@ -88,58 +89,58 @@ function Measure-AvoidDeepNesting {
             if ($Ast -is [System.Management.Automation.Language.SwitchStatementAst]) {
                 foreach ($Clause in $Ast.Clauses) {
                     if ($null -ne $Clause -and $null -ne $Clause.Item2) {
-                        Visit-StatementBlock -Block $Clause.Item2 -Depth ($Depth + 1)
+                        Invoke-StatementBlockTraversal -Block $Clause.Item2 -Depth ($Depth + 1)
                     }
                 }
 
                 if ($Ast.Default) {
-                    Visit-StatementBlock -Block $Ast.Default -Depth ($Depth + 1)
+                    Invoke-StatementBlockTraversal -Block $Ast.Default -Depth ($Depth + 1)
                 }
 
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.TryStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
 
                 foreach ($CatchClause in $Ast.CatchClauses) {
-                    Visit-StatementBlock -Block $CatchClause.Body -Depth ($Depth + 1)
+                    Invoke-StatementBlockTraversal -Block $CatchClause.Body -Depth ($Depth + 1)
                 }
 
                 if ($Ast.Finally) {
-                    Visit-StatementBlock -Block $Ast.Finally -Depth ($Depth + 1)
+                    Invoke-StatementBlockTraversal -Block $Ast.Finally -Depth ($Depth + 1)
                 }
 
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.ForEachStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.ForStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.WhileStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.DoWhileStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.DoUntilStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
                 return
             }
 
             if ($Ast -is [System.Management.Automation.Language.TrapStatementAst]) {
-                Visit-StatementBlock -Block $Ast.Body -Depth ($Depth + 1)
+                Invoke-StatementBlockTraversal -Block $Ast.Body -Depth ($Depth + 1)
                 return
             }
         }
@@ -152,7 +153,7 @@ function Measure-AvoidDeepNesting {
             )) {
             if ($NamedBlock -and $NamedBlock.Statements) {
                 foreach ($Statement in $NamedBlock.Statements) {
-                    Visit-Statement -Ast $Statement -Depth 0
+                    Invoke-StatementTraversal -Ast $Statement -Depth 0
                 }
             }
         }
@@ -170,10 +171,19 @@ function Measure-AvoidDeepNesting {
 
         if ($depth -le $maxAllowedDepth) { continue }
 
-        $message = "Function '{0}' is nested {1} levels deep (maximum: {2}). Refactor (guard clauses/extract helpers) or suppress with SuppressMessageAttribute." -f $fn.Name, $depth, $maxAllowedDepth
+        $message = @(
+            "Function '{0}' is nested {1} levels deep (maximum: {2})." -f $fn.Name, $depth, $maxAllowedDepth
+            'Refactor (guard clauses/extract helpers) or suppress with SuppressMessageAttribute.'
+        ) -join ' '
 
-        $diagnostics.Add((New-Diagnostic -Message $message -Extent $fn.Extent -Severity 'Warning' -RuleName $ruleName))
-	    }
+        $diagParams = @{
+            Message  = $message
+            Extent   = $fn.Extent
+            Severity = 'Warning'
+            RuleName = $ruleName
+        }
+        $diagnostics.Add((ConvertTo-DiagnosticRecord @diagParams))
+    }
 
     return $diagnostics
 }

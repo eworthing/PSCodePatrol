@@ -1,4 +1,4 @@
-function New-ScriptExtentFromOffset {
+function Get-ScriptExtentFromOffset {
     <#
     .SYNOPSIS
         Creates an IScriptExtent from a character offset and length within script text.
@@ -47,17 +47,33 @@ function New-ScriptExtentFromOffset {
     $endColumnNumber = $endOffset - $lineStarts[$endLineIdx] + 1
 
     # Extract line text (strip trailing line endings for ScriptPosition).
-    $startLineEnd  = if ($startLineIdx + 1 -lt $lineStarts.Count) { $lineStarts[$startLineIdx + 1] } else { $Text.Length }
-    $startLineText = $Text.Substring($lineStarts[$startLineIdx], $startLineEnd - $lineStarts[$startLineIdx]) -replace '\r?\n$', ''
+    $startLineEnd = if ($startLineIdx + 1 -lt $lineStarts.Count) {
+        $lineStarts[$startLineIdx + 1]
+    }
+    else {
+        $Text.Length
+    }
+    $startLineText = $Text.Substring(
+        $lineStarts[$startLineIdx],
+        $startLineEnd - $lineStarts[$startLineIdx]
+    ) -replace '\r?\n$', ''
 
-    $endLineEnd  = if ($endLineIdx + 1 -lt $lineStarts.Count) { $lineStarts[$endLineIdx + 1] } else { $Text.Length }
-    $endLineText = $Text.Substring($lineStarts[$endLineIdx], $endLineEnd - $lineStarts[$endLineIdx]) -replace '\r?\n$', ''
+    $endLineEnd = if ($endLineIdx + 1 -lt $lineStarts.Count) {
+        $lineStarts[$endLineIdx + 1]
+    }
+    else {
+        $Text.Length
+    }
+    $endLineText = $Text.Substring(
+        $lineStarts[$endLineIdx],
+        $endLineEnd - $lineStarts[$endLineIdx]
+    ) -replace '\r?\n$', ''
 
     # Construct ScriptPosition then ScriptExtent.
     $posType  = [System.Management.Automation.Language.ScriptPosition]
     $extType  = [System.Management.Automation.Language.ScriptExtent]
     $startPos = $posType::new($FilePath, $startLineNumber, $startColumnNumber, $startLineText)
-    $endPos   = $posType::new($FilePath, $endLineNumber,   $endColumnNumber,   $endLineText)
+    $endPos   = $posType::new($FilePath, $endLineNumber, $endColumnNumber, $endLineText)
 
     return $extType::new($startPos, $endPos)
 }

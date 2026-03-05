@@ -1,4 +1,4 @@
-function New-CorrectionExtent {
+function ConvertTo-CorrectionExtent {
     param(
         [int]$StartLine,
         [int]$EndLine,

@@ -40,7 +40,7 @@ function Measure-UnsafeCountProperty {
         $ScriptBlockAst
     )
 
-    Process {
+    process {
         # PSScriptAnalyzer calls this function once per ScriptBlockAst in the file.
         # Only analyze from the file-level AST to avoid duplicate diagnostics.
         if ($null -ne $ScriptBlockAst.Parent) { return }
@@ -52,9 +52,9 @@ function Measure-UnsafeCountProperty {
         function Test-HasCommand {
             param([System.Management.Automation.Language.Ast]$Ast)
             $found = @($Ast.FindAll({
-                    param($A)
-                    $A -is [System.Management.Automation.Language.CommandAst]
-                }, $true))
+                        param($A)
+                        $A -is [System.Management.Automation.Language.CommandAst]
+                    }, $true))
             return ($found.Count -gt 0)
         }
 
@@ -85,9 +85,9 @@ function Measure-UnsafeCountProperty {
         function Test-HasGroupObjectAsHashTable {
             param([System.Management.Automation.Language.Ast]$Ast)
             $commands = @($Ast.FindAll({
-                param($A)
-                $A -is [System.Management.Automation.Language.CommandAst]
-            }, $true))
+                        param($A)
+                        $A -is [System.Management.Automation.Language.CommandAst]
+                    }, $true))
             foreach ($cmd in $commands) {
                 $name = $cmd.GetCommandName()
                 if ($name -eq 'Group-Object' -or $name -eq 'group') {
@@ -118,17 +118,19 @@ function Measure-UnsafeCountProperty {
 
             # Collect all assignment statements
             $assignments = @($ScopeAst.FindAll({
-                    param($A)
-                    $A -is [System.Management.Automation.Language.AssignmentStatementAst]
-                }, $SearchNested))
+                        param($A)
+                        $A -is [System.Management.Automation.Language.AssignmentStatementAst]
+                    }, $SearchNested))
 
             # Collect all .Count member accesses
             $countAccesses = @($ScopeAst.FindAll({
-                    param($A)
-                    if ($A -isnot [System.Management.Automation.Language.MemberExpressionAst]) { return $false }
-                    if ($A.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { return $false }
-                    return ($A.Member.Value -eq 'Count')
-                }, $SearchNested))
+                        param($A)
+                        if ($A -isnot [System.Management.Automation.Language.MemberExpressionAst]) { return $false }
+                        if ($A.Member -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                            return $false
+                        }
+                        return ($A.Member.Value -eq 'Count')
+                    }, $SearchNested))
 
             # Build a merged work list sorted by source offset
             $workList = New-Object System.Collections.Generic.List[PSCustomObject]
@@ -157,7 +159,8 @@ function Measure-UnsafeCountProperty {
                     $lhs = $assign.Left
                     if ($lhs -is [System.Management.Automation.Language.VariableExpressionAst]) {
                         $varName = $lhs.VariablePath.UserPath
-                    } elseif ($lhs -is [System.Management.Automation.Language.ConvertExpressionAst] -and
+                    }
+                    elseif ($lhs -is [System.Management.Automation.Language.ConvertExpressionAst] -and
                         $lhs.Child -is [System.Management.Automation.Language.VariableExpressionAst]) {
                         $varName = $lhs.Child.VariablePath.UserPath
                     }
@@ -168,10 +171,12 @@ function Measure-UnsafeCountProperty {
                     if (Test-IsArrayWrapped $rhs) {
                         # Safe: @() wrapping guarantees array
                         $unsafeVars.Remove($varName) | Out-Null
-                    } elseif (Test-HasGroupObjectAsHashTable $rhs) {
+                    }
+                    elseif (Test-HasGroupObjectAsHashTable $rhs) {
                         # Group-Object -AsHashTable returns [Hashtable]; .Count is always safe
                         $unsafeVars.Remove($varName) | Out-Null
-                    } elseif (Test-HasCommand $rhs) {
+                    }
+                    elseif (Test-HasCommand $rhs) {
                         # Unsafe: command/pipeline without @()
                         $unsafeVars.Add($varName) | Out-Null
                     }
@@ -206,8 +211,15 @@ function Measure-UnsafeCountProperty {
                             FilePath        = $extent.File
                             Description     = 'Wrap in @() to ensure .Count works on PS 5.1'
                         }
-                        $fix = New-CorrectionExtent @fixParams
-                        $diagnostics.Add((New-Diagnostic -Message $msg -Extent $extent -Severity 'Warning' -RuleName $ruleName -SuggestedCorrections @($fix)))
+                        $fix = ConvertTo-CorrectionExtent @fixParams
+                        $diagParams = @{
+                            Message              = $msg
+                            Extent               = $extent
+                            Severity             = 'Warning'
+                            RuleName             = $ruleName
+                            SuggestedCorrections = @($fix)
+                        }
+                        $diagnostics.Add((ConvertTo-DiagnosticRecord @diagParams))
                     }
                     continue
                 }
@@ -233,8 +245,15 @@ function Measure-UnsafeCountProperty {
                             FilePath        = $extent.File
                             Description     = 'Wrap in @() to ensure .Count works on PS 5.1'
                         }
-                        $fix = New-CorrectionExtent @fixParams
-                        $diagnostics.Add((New-Diagnostic -Message $msg -Extent $extent -Severity 'Warning' -RuleName $ruleName -SuggestedCorrections @($fix)))
+                        $fix = ConvertTo-CorrectionExtent @fixParams
+                        $diagParams = @{
+                            Message              = $msg
+                            Extent               = $extent
+                            Severity             = 'Warning'
+                            RuleName             = $ruleName
+                            SuggestedCorrections = @($fix)
+                        }
+                        $diagnostics.Add((ConvertTo-DiagnosticRecord @diagParams))
                     }
                 }
             }
@@ -242,9 +261,9 @@ function Measure-UnsafeCountProperty {
 
         # ── Analyze each function independently (per-function variable scope) ──
         $functions = @($ScriptBlockAst.FindAll({
-                param($A)
-                $A -is [System.Management.Automation.Language.FunctionDefinitionAst]
-            }, $true))
+                    param($A)
+                    $A -is [System.Management.Automation.Language.FunctionDefinitionAst]
+                }, $true))
 
         foreach ($fn in $functions) {
             Invoke-ScopeAnalysis -ScopeAst $fn.Body

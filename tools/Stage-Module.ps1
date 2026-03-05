@@ -45,4 +45,4 @@ foreach ($directory in $directories) {
     Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $OutDir $directory) -Recurse -Force
 }
 
-Write-Host "Staged module to: $OutDir"
+Write-Output "Staged module to: $OutDir"

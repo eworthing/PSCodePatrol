@@ -78,11 +78,17 @@ function Measure-AvoidBacktickLineContinuation {
             return (-not $e2 -or $e2.Count -eq 0)
         }
 
-        foreach ($lc in ($tokens | Where-Object Kind -EQ ([System.Management.Automation.Language.TokenKind]::LineContinuation))) {
-            $isRedundant = Test-RemoveBacktickKeepsParsing -LineContinuationToken $lc -BaselineHasParseErrors:$hasBaselineParseErrors
+        $lineContinuationKind = [System.Management.Automation.Language.TokenKind]::LineContinuation
+        foreach ($lc in ($tokens | Where-Object Kind -EQ $lineContinuationKind)) {
+            $testParams = @{
+                LineContinuationToken  = $lc
+                BaselineHasParseErrors = $hasBaselineParseErrors
+            }
+            $isRedundant = Test-RemoveBacktickKeepsParsing @testParams
 
             if ($isRedundant) {
-                $replacement = ($lc.Extent.Text -replace '^\`', '')  # drop only the backtick at start; keep newline text
+                # Drop only the leading backtick and keep newline text.
+                $replacement = ($lc.Extent.Text -replace '^\`', '')
 
                 $fixParams = @{
                     StartLine       = $lc.Extent.StartLineNumber
@@ -93,17 +99,28 @@ function Measure-AvoidBacktickLineContinuation {
                     FilePath        = $filePath
                     Description     = 'Remove redundant backtick line continuation (newline already parses without it).'
                 }
-                $fix = New-CorrectionExtent @fixParams
+                $fix = ConvertTo-CorrectionExtent @fixParams
 
                 $msg = @(
                     'CATEGORY: BacktickLineContinuation.Redundant.',
                     'POLICY: Do not use backtick (`) for line continuation.',
                     'ACTION: Remove the backtick; keep the newline.',
-                    'REFACTOR_HINTS: If formatting still needs cleanup, break after |, after an operator, after a comma, or after opening (, {, [; use splatting for long parameter lists; use grouping constructs (), @(), @{}.',
+                    (
+                        'REFACTOR_HINTS: If formatting still needs cleanup, break after |, after an operator, ' +
+                        'after a comma, or after opening (, {, [; use splatting for long parameter lists; use ' +
+                        'grouping constructs (), @(), @{}.'
+                    ),
                     'AUTOFIX: Yes (SuggestedCorrection removes backtick only).'
                 ) -join ' '
 
-                $results.Add((New-Diagnostic -Message $msg -Extent $lc.Extent -Severity 'Warning' -RuleName $ruleName -SuggestedCorrections @($fix)))
+                $diagParams = @{
+                    Message              = $msg
+                    Extent               = $lc.Extent
+                    Severity             = 'Warning'
+                    RuleName             = $ruleName
+                    SuggestedCorrections = @($fix)
+                }
+                $results.Add((ConvertTo-DiagnosticRecord @diagParams))
                 continue
             }
 
@@ -111,11 +128,21 @@ function Measure-AvoidBacktickLineContinuation {
                 'CATEGORY: BacktickLineContinuation.Structural.',
                 'POLICY: Do not use backtick (`) for line continuation.',
                 'ACTION: Remove the backtick and refactor so the newline is legal without it.',
-                'REFACTOR_HINTS: Move the line break to a natural breakpoint (after | / operators / commas / opening (, {, [); use splatting ($p=@{...}; Cmdlet @p); use grouping constructs (), @(), @{} to allow multiline expressions.',
+                (
+                    'REFACTOR_HINTS: Move the line break to a natural breakpoint (after | / operators / ' +
+                    'commas / opening (, {, [); use splatting ($p=@{...}; Cmdlet @p); use grouping constructs ' +
+                    '(), @(), @{} to allow multiline expressions.'
+                ),
                 'AUTOFIX: No (requires refactor).'
             ) -join ' '
 
-            $results.Add((New-Diagnostic -Message $msg -Extent $lc.Extent -Severity 'Warning' -RuleName $ruleName))
+            $diagParams = @{
+                Message  = $msg
+                Extent   = $lc.Extent
+                Severity = 'Warning'
+                RuleName = $ruleName
+            }
+            $results.Add((ConvertTo-DiagnosticRecord @diagParams))
         }
 
         return $results.ToArray()

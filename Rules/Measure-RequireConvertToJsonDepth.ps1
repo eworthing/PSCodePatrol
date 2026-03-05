@@ -47,9 +47,9 @@ function Measure-RequireConvertToJsonDepth {
         $results  = [System.Collections.Generic.List[object]]::new()
 
         $commandAsts = $ScriptBlockAst.FindAll({
-            param($a)
-            $a -is [System.Management.Automation.Language.CommandAst]
-        }, $true)
+                param($a)
+                $a -is [System.Management.Automation.Language.CommandAst]
+            }, $true)
 
         foreach ($cmdAst in $commandAsts) {
             if ($cmdAst.CommandElements.Count -lt 1) { continue }
@@ -82,12 +82,19 @@ function Measure-RequireConvertToJsonDepth {
                 FilePath        = $cmdExtent.File
                 Description     = 'Add -Depth 10 to ConvertTo-Json.'
             }
-            $fix = New-CorrectionExtent @fixParams
+            $fix = ConvertTo-CorrectionExtent @fixParams
 
-            $msg = "ConvertTo-Json without -Depth silently truncates — the default depth is 2." +
-                " Add -Depth <n> (e.g., -Depth 10) to prevent silent data loss. Autofix adds -Depth 10."
+            $msg = 'ConvertTo-Json without -Depth silently truncates — the default depth is 2.' +
+            ' Add -Depth <n> (e.g., -Depth 10) to prevent silent data loss. Autofix adds -Depth 10.'
 
-            $results.Add((New-Diagnostic -Message $msg -Extent $cmdExtent -Severity 'Warning' -RuleName $ruleName -SuggestedCorrections @($fix)))
+            $diagParams = @{
+                Message              = $msg
+                Extent               = $cmdExtent
+                Severity             = 'Warning'
+                RuleName             = $ruleName
+                SuggestedCorrections = @($fix)
+            }
+            $results.Add((ConvertTo-DiagnosticRecord @diagParams))
         }
 
         return $results.ToArray()

@@ -74,7 +74,7 @@ function Measure-AvoidBacktickObfuscationNoOpInIdentifier {
                     $prevIsWord  = $m.Index -gt 0 -and $t[$m.Index - 1] -match '\w'
                     if (-not $prevIsWord -and
                         $nextCharIdx -lt $t.Length -and
-                        @('0','a','b','e','f','n','r','t','v') -ccontains [string]$t[$nextCharIdx]) {
+                        @('0', 'a', 'b', 'e', 'f', 'n', 'r', 't', 'v') -ccontains [string]$t[$nextCharIdx]) {
                         continue
                     }
                 }
@@ -90,7 +90,7 @@ function Measure-AvoidBacktickObfuscationNoOpInIdentifier {
                     FilePath        = $filePath
                     Description     = 'Remove no-op backtick inside identifier-like token.'
                 }
-                $fixes.Add((New-CorrectionExtent @fixParams))
+                $fixes.Add((ConvertTo-CorrectionExtent @fixParams))
             }
 
             # All backtick matches were legitimate escape sequences — skip this token.
@@ -99,11 +99,21 @@ function Measure-AvoidBacktickObfuscationNoOpInIdentifier {
             $msg = @(
                 'CATEGORY: BacktickObfuscation.NoOpInIdentifier.',
                 'ACTION: Remove the no-op backtick(s) inside the identifier/token.',
-                'DETAIL: Backticks inside identifier-like tokens are visually misleading and commonly used for obfuscation.',
+                (
+                    'DETAIL: Backticks inside identifier-like tokens are visually misleading and commonly ' +
+                    'used for obfuscation.'
+                ),
                 'AUTOFIX: Yes (SuggestedCorrection removes the backtick character).'
             ) -join ' '
 
-            $results.Add((New-Diagnostic -Message $msg -Extent $tok.Extent -Severity 'Warning' -RuleName $ruleName -SuggestedCorrections $fixes))
+            $diagParams = @{
+                Message              = $msg
+                Extent               = $tok.Extent
+                Severity             = 'Warning'
+                RuleName             = $ruleName
+                SuggestedCorrections = $fixes
+            }
+            $results.Add((ConvertTo-DiagnosticRecord @diagParams))
         }
 
         return $results.ToArray()

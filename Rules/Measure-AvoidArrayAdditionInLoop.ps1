@@ -118,20 +118,30 @@ function Measure-AvoidArrayAdditionInLoop {
         }
 
         # Helper: build the diagnostic message for a flagged assignment.
-        function New-ArrayLoopDiagnostic {
+        function Get-ArrayLoopDiagnostic {
             param(
                 [System.Management.Automation.Language.Ast]$AssignAst,
                 [string]$LhsText
             )
-            $msg = "'$LhsText += ...' in a loop is O(n^2) — arrays and strings are immutable so each += allocates a new copy." +
-                " For arrays: collect output with `$var = @(foreach (...) { ... }) (the @() ensures an array even for 0 or 1 items)," +
-                " or use [System.Collections.Generic.List[object]]::new() with .Add()." +
-                " For strings: use [System.Text.StringBuilder]. No autofix."
-            return (New-Diagnostic -Message $msg -Extent $AssignAst.Extent -Severity 'Warning' -RuleName $ruleName)
+            $msg = @(
+                "'$LhsText += ...' in a loop is O(n^2): arrays and strings are immutable"
+                'so each += allocates a new copy.'
+                'For arrays: collect output with $var = @(foreach (...) { ... })'
+                '(the @() ensures an array even for 0 or 1 items),'
+                'or use [System.Collections.Generic.List[object]]::new() with .Add().'
+                'For strings: use [System.Text.StringBuilder]. No autofix.'
+            ) -join ' '
+            $diagParams = @{
+                Message  = $msg
+                Extent   = $AssignAst.Extent
+                Severity = 'Warning'
+                RuleName = $ruleName
+            }
+            return (ConvertTo-DiagnosticRecord @diagParams)
         }
 
         # Helper: returns $true when the RHS is a numeric constant (int/long/double/decimal).
-        function Test-NumericConstantRhs {
+        function Test-NumericConstantRightHandSide {
             param([System.Management.Automation.Language.StatementAst]$RhsAst)
             if ($RhsAst -isnot [System.Management.Automation.Language.CommandExpressionAst]) { return $false }
             $inner = $RhsAst.Expression
@@ -151,7 +161,7 @@ function Measure-AvoidArrayAdditionInLoop {
             $iter = $LoopAncestor.Iterator
             if ($null -eq $iter) { return $false }
             return ($AssignAst.Extent.StartOffset -ge $iter.Extent.StartOffset -and
-                    $AssignAst.Extent.EndOffset   -le $iter.Extent.EndOffset)
+                $AssignAst.Extent.EndOffset   -le $iter.Extent.EndOffset)
         }
 
         # Helper: returns $true if an expression references the target variable path.
@@ -161,11 +171,12 @@ function Measure-AvoidArrayAdditionInLoop {
                 [string]$VariablePath
             )
             if ($null -eq $ExprAst) { return $false }
+            $targetVariablePath = $VariablePath
             $refs = $ExprAst.FindAll({
-                param($a)
-                $a -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                $a.VariablePath.UserPath -eq $VariablePath
-            }, $true)
+                    param($a)
+                    $a -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $a.VariablePath.UserPath -eq $targetVariablePath
+                }, $true)
             return (@($refs).Count -gt 0)
         }
 
@@ -187,13 +198,13 @@ function Measure-AvoidArrayAdditionInLoop {
             $loopStart = $LoopAncestor.Extent.StartOffset
 
             $priorAssigns = @($LoopAncestor.FindAll({
-                param($a)
-                $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                $a.Left.VariablePath.UserPath -eq $VariablePath -and
-                $a.Extent.StartOffset -gt $loopStart -and
-                $a.Extent.EndOffset -lt $currentStart
-            }, $true) | Sort-Object { $_.Extent.EndOffset })
+                        param($a)
+                        $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $a.Left.VariablePath.UserPath -eq $VariablePath -and
+                        $a.Extent.StartOffset -gt $loopStart -and
+                        $a.Extent.EndOffset -lt $currentStart
+                    }, $true) | Sort-Object { $_.Extent.EndOffset })
 
             if ($priorAssigns.Count -eq 0) { return $false }
 
@@ -209,7 +220,7 @@ function Measure-AvoidArrayAdditionInLoop {
         }
 
         # Helper: finds assignments to the variable in the same scope before loop start.
-        function Get-PreLoopAssignments {
+        function Get-PreLoopAssignment {
             param(
                 [string]$VariablePath,
                 [System.Management.Automation.Language.Ast]$LoopAncestor
@@ -228,14 +239,15 @@ function Measure-AvoidArrayAdditionInLoop {
 
             $eqOp = [System.Management.Automation.Language.TokenKind]::Equals
             $loopStart = $LoopAncestor.Extent.StartOffset
+            $targetVariablePath = $VariablePath
             return @($scope.FindAll({
-                param($a)
-                $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                $a.Operator -eq $eqOp -and
-                $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                $a.Left.VariablePath.UserPath -eq $VariablePath -and
-                $a.Extent.EndOffset -lt $loopStart
-            }, $true))
+                        param($a)
+                        $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $a.Operator -eq $eqOp -and
+                        $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $a.Left.VariablePath.UserPath -eq $targetVariablePath -and
+                        $a.Extent.EndOffset -lt $loopStart
+                    }, $true))
         }
 
         # Helper: returns $true when the variable is initialised with a numeric
@@ -247,7 +259,7 @@ function Measure-AvoidArrayAdditionInLoop {
                 [string]$VariablePath,
                 [System.Management.Automation.Language.Ast]$LoopAncestor
             )
-            foreach ($init in (Get-PreLoopAssignments -VariablePath $VariablePath -LoopAncestor $LoopAncestor)) {
+            foreach ($init in (Get-PreLoopAssignment -VariablePath $VariablePath -LoopAncestor $LoopAncestor)) {
                 if ($init.Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
                     $innerExpr = $init.Right.Expression
                     if ($innerExpr -is [System.Management.Automation.Language.ConstantExpressionAst]) {
@@ -268,7 +280,7 @@ function Measure-AvoidArrayAdditionInLoop {
                 [string]$VariablePath,
                 [System.Management.Automation.Language.Ast]$LoopAncestor
             )
-            foreach ($init in (Get-PreLoopAssignments -VariablePath $VariablePath -LoopAncestor $LoopAncestor)) {
+            foreach ($init in (Get-PreLoopAssignment -VariablePath $VariablePath -LoopAncestor $LoopAncestor)) {
                 if ($init.Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
                     $innerExpr = $init.Right.Expression
                     if ($innerExpr -is [System.Management.Automation.Language.VariableExpressionAst] -and
@@ -290,18 +302,28 @@ function Measure-AvoidArrayAdditionInLoop {
             )
 
             if ($null -eq $Expr) { return $false }
+            $accPath = $AccumulatorVariablePath
 
             if ($Expr -is [System.Management.Automation.Language.CommandExpressionAst]) {
-                return (Test-ObviouslyNumericExpression -Expr $Expr.Expression -AccumulatorVariablePath $AccumulatorVariablePath)
+                $nestedExpr = $Expr.Expression
+                return (
+                    Test-ObviouslyNumericExpression -Expr $nestedExpr -AccumulatorVariablePath $accPath
+                )
             }
             if ($Expr -is [System.Management.Automation.Language.ParenExpressionAst]) {
-                return (Test-ObviouslyNumericExpression -Expr $Expr.Pipeline -AccumulatorVariablePath $AccumulatorVariablePath)
+                $nestedExpr = $Expr.Pipeline
+                return (
+                    Test-ObviouslyNumericExpression -Expr $nestedExpr -AccumulatorVariablePath $accPath
+                )
             }
             if ($Expr -is [System.Management.Automation.Language.PipelineAst]) {
                 if ($Expr.PipelineElements.Count -ne 1) { return $false }
                 $only = $Expr.PipelineElements[0]
                 if ($only -is [System.Management.Automation.Language.CommandExpressionAst]) {
-                    return (Test-ObviouslyNumericExpression -Expr $only.Expression -AccumulatorVariablePath $AccumulatorVariablePath)
+                    $nestedExpr = $only.Expression
+                    return (
+                        Test-ObviouslyNumericExpression -Expr $nestedExpr -AccumulatorVariablePath $accPath
+                    )
                 }
                 return $false
             }
@@ -332,9 +354,13 @@ function Measure-AvoidArrayAdditionInLoop {
                     [System.Management.Automation.Language.TokenKind]::Rem
                 )
                 if ($numericOps -contains $Expr.Operator) {
+                    $leftExpr = $Expr.Left
+                    $leftIsNumeric = Test-ObviouslyNumericExpression -Expr $leftExpr -AccumulatorVariablePath $accPath
+                    $rightExpr = $Expr.Right
+                    $rightIsNumeric = Test-ObviouslyNumericExpression -Expr $rightExpr -AccumulatorVariablePath $accPath
                     return (
-                        (Test-ObviouslyNumericExpression -Expr $Expr.Left -AccumulatorVariablePath $AccumulatorVariablePath) -and
-                        (Test-ObviouslyNumericExpression -Expr $Expr.Right -AccumulatorVariablePath $AccumulatorVariablePath)
+                        $leftIsNumeric -and
+                        $rightIsNumeric
                     )
                 }
             }
@@ -345,10 +371,10 @@ function Measure-AvoidArrayAdditionInLoop {
         # --- Pass 1: $var += $expr ---
         $plusEqualsOp = [System.Management.Automation.Language.TokenKind]::PlusEquals
         $assignments = $ScriptBlockAst.FindAll({
-            param($a)
-            $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-            $a.Operator -eq $plusEqualsOp
-        }, $true)
+                param($a)
+                $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $a.Operator -eq $plusEqualsOp
+            }, $true)
 
         foreach ($assign in $assignments) {
             # 1a: Skip member-access ($obj.Prop += ...) and indexer ($hash['k'] += ...) LHS.
@@ -361,20 +387,33 @@ function Measure-AvoidArrayAdditionInLoop {
             if (Test-ForLoopIterator -AssignAst $assign -LoopAncestor $loopAncestor) { continue }
 
             # 1c: Skip numeric-constant RHS ($counter += 1 is O(1) integer addition).
-            if (Test-NumericConstantRhs -RhsAst $assign.Right) { continue }
+            if (Test-NumericConstantRightHandSide -RhsAst $assign.Right) { continue }
 
             # 1d: Skip numeric accumulators ($total = 0 before loop, then $total += $obj.Count).
             $varPath = $assign.Left.VariablePath.UserPath
             if (Test-NumericAccumulator -VariablePath $varPath -LoopAncestor $loopAncestor) { continue }
             if (Test-NullAccumulatorInitializer -VariablePath $varPath -LoopAncestor $loopAncestor) {
-                if ($assign.Right -is [System.Management.Automation.Language.CommandExpressionAst] -and
-                    (Test-ObviouslyNumericExpression -Expr $assign.Right.Expression -AccumulatorVariablePath $varPath)) {
+                $isNumericRightExpression = $false
+                if ($assign.Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    $rightExpr = $assign.Right.Expression
+                    $numericExprParams = @{
+                        Expr                    = $rightExpr
+                        AccumulatorVariablePath = $varPath
+                    }
+                    $isNumericRightExpression = Test-ObviouslyNumericExpression @numericExprParams
+                }
+                if ($isNumericRightExpression) {
                     continue
                 }
             }
-            if (Test-LoopLocalReinitializationBeforeAppend -VariablePath $varPath -CurrentAssign $assign -LoopAncestor $loopAncestor) { continue }
+            $reinitParams = @{
+                VariablePath  = $varPath
+                CurrentAssign = $assign
+                LoopAncestor  = $loopAncestor
+            }
+            if (Test-LoopLocalReinitializationBeforeAppend @reinitParams) { continue }
 
-            $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
+            $results.Add((Get-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
         }
 
         # Helper: walks a Plus-operator chain to find a specific variable at any depth.
@@ -399,11 +438,11 @@ function Measure-AvoidArrayAdditionInLoop {
         # --- Pass 2: $var = $var + $expr (equivalent form) ---
         $equalsOp = [System.Management.Automation.Language.TokenKind]::Equals
         $equalsAssigns = $ScriptBlockAst.FindAll({
-            param($a)
-            $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-            $a.Operator -eq $equalsOp -and
-            $a.Left -is [System.Management.Automation.Language.VariableExpressionAst]
-        }, $true)
+                param($a)
+                $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $a.Operator -eq $equalsOp -and
+                $a.Left -is [System.Management.Automation.Language.VariableExpressionAst]
+            }, $true)
 
         foreach ($assign in $equalsAssigns) {
             $loopAncestor = Get-LoopAncestor -Ast $assign
@@ -422,7 +461,8 @@ function Measure-AvoidArrayAdditionInLoop {
             if ($expr.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
                 $expr.Left.VariablePath.UserPath -eq $lhsPath) {
                 $otherOperand = $expr.Right
-            } elseif ($expr.Right -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            }
+            elseif ($expr.Right -is [System.Management.Automation.Language.VariableExpressionAst] -and
                 $expr.Right.VariablePath.UserPath -eq $lhsPath) {
                 $otherOperand = $expr.Left
             }
@@ -439,20 +479,37 @@ function Measure-AvoidArrayAdditionInLoop {
                 # Skip numeric accumulators ($total = 0 before loop, then $total = $total + $obj.Count).
                 if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
                 if (Test-NullAccumulatorInitializer -VariablePath $lhsPath -LoopAncestor $loopAncestor) {
-                    if (Test-ObviouslyNumericExpression -Expr $otherOperand -AccumulatorVariablePath $lhsPath) { continue }
+                    $otherExpr = $otherOperand
+                    $numericExprParams = @{
+                        Expr                    = $otherExpr
+                        AccumulatorVariablePath = $lhsPath
+                    }
+                    $otherOperandIsNumeric = Test-ObviouslyNumericExpression @numericExprParams
+                    if ($otherOperandIsNumeric) { continue }
                 }
-                if (Test-LoopLocalReinitializationBeforeAppend -VariablePath $lhsPath -CurrentAssign $assign -LoopAncestor $loopAncestor) { continue }
+                $reinitParams = @{
+                    VariablePath  = $lhsPath
+                    CurrentAssign = $assign
+                    LoopAncestor  = $loopAncestor
+                }
+                if (Test-LoopLocalReinitializationBeforeAppend @reinitParams) { continue }
 
-                $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
-            } elseif (Find-VariableInPlusChain -Expr $expr -VariablePath $lhsPath) {
+                $results.Add((Get-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
+            }
+            elseif (Find-VariableInPlusChain -Expr $expr -VariablePath $lhsPath) {
                 # Nested chain: $var = $var + $a + $b  (BinaryExpressionAst nesting)
                 # No single "other operand" to check, rely on accumulator heuristic only.
                 if (Test-NumericAccumulator -VariablePath $lhsPath -LoopAncestor $loopAncestor) { continue }
                 if (Test-NullAccumulatorInitializer -VariablePath $lhsPath -LoopAncestor $loopAncestor) {
                     if (Test-ObviouslyNumericExpression -Expr $expr -AccumulatorVariablePath $lhsPath) { continue }
                 }
-                if (Test-LoopLocalReinitializationBeforeAppend -VariablePath $lhsPath -CurrentAssign $assign -LoopAncestor $loopAncestor) { continue }
-                $results.Add((New-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
+                $reinitParams = @{
+                    VariablePath  = $lhsPath
+                    CurrentAssign = $assign
+                    LoopAncestor  = $loopAncestor
+                }
+                if (Test-LoopLocalReinitializationBeforeAppend @reinitParams) { continue }
+                $results.Add((Get-ArrayLoopDiagnostic -AssignAst $assign -LhsText $assign.Left.Extent.Text))
             }
         }
 

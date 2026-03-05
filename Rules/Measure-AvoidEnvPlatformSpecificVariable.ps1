@@ -56,8 +56,8 @@ function Measure-AvoidEnvPlatformSpecificVariable {
         # Uses VariableExpressionAst.VariablePath.UserPath so that $env:USERNAME inside
         # expandable strings, here-strings, and sub-expressions is also detected.
         $varAsts = $ScriptBlockAst.FindAll({
-            param($a) $a -is [System.Management.Automation.Language.VariableExpressionAst]
-        }, $true)
+                param($a) $a -is [System.Management.Automation.Language.VariableExpressionAst]
+            }, $true)
 
         foreach ($varAst in $varAsts) {
             $varPath  = $varAst.VariablePath
@@ -135,7 +135,8 @@ function Measure-AvoidEnvPlatformSpecificVariable {
                 # rather than emitted as literal text. Variable replacements like $HOME work natively.
                 # Inside a sub-expression ($($env:USERNAME)), the parent is CommandExpressionAst,
                 # so the wrap does NOT apply — avoiding double $().
-                $inExpandableString = $varAst.Parent -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+                $inExpandableString =
+                $varAst.Parent -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
                 $isVariable = $bannedEntry.ContainsKey('IsVariable') -and $bannedEntry.IsVariable
                 if ($inExpandableString -and -not $isVariable) {
                     $replacement = "`$($replacement)"
@@ -150,15 +151,28 @@ function Measure-AvoidEnvPlatformSpecificVariable {
                     FilePath        = $filePath
                     Description     = "Replace $originalText with $replacement for cross-platform compatibility."
                 }
-                $fix = New-CorrectionExtent @fixParams
+                $fix = ConvertTo-CorrectionExtent @fixParams
 
                 $msg = "$originalText is not set on macOS/Linux — replace with $replacement. Autofix available."
-                $results.Add((New-Diagnostic -Message $msg -Extent $varAst.Extent -Severity 'Error' -RuleName $ruleName -SuggestedCorrections @($fix)))
+                $diagParams = @{
+                    Message              = $msg
+                    Extent               = $varAst.Extent
+                    Severity             = 'Error'
+                    RuleName             = $ruleName
+                    SuggestedCorrections = @($fix)
+                }
+                $results.Add((ConvertTo-DiagnosticRecord @diagParams))
             }
             else {
                 # Warn-only — no safe drop-in replacement exists.
                 $msg = "$originalText is not set on macOS/Linux — consider $suggestion instead. No autofix."
-                $results.Add((New-Diagnostic -Message $msg -Extent $varAst.Extent -Severity 'Warning' -RuleName $ruleName))
+                $diagParams = @{
+                    Message  = $msg
+                    Extent   = $varAst.Extent
+                    Severity = 'Warning'
+                    RuleName = $ruleName
+                }
+                $results.Add((ConvertTo-DiagnosticRecord @diagParams))
             }
         }
 

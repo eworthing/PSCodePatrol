@@ -1,8 +1,8 @@
-function New-Diagnostic {
+function ConvertTo-DiagnosticRecord {
     param(
         [string]$Message,
         [System.Management.Automation.Language.IScriptExtent]$Extent,
-        [ValidateSet('Information','Warning','Error')]
+        [ValidateSet('Information', 'Warning', 'Error')]
         [string]$Severity,
         [string]$RuleName,
         [System.Collections.IEnumerable]$SuggestedCorrections
@@ -16,7 +16,7 @@ function New-Diagnostic {
     }
 
     if ($SuggestedCorrections) {
-        $h.SuggestedCorrections = New-CorrectionCollection -Items $SuggestedCorrections
+        $h.SuggestedCorrections = ConvertTo-CorrectionCollection -Items $SuggestedCorrections
     }
 
     return [Microsoft.Windows.PowerShell.ScriptAnalyzer.Generic.DiagnosticRecord]$h

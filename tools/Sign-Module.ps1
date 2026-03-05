@@ -26,24 +26,51 @@ if (-not (Test-Path -LiteralPath $PfxPath)) {
     throw "PFX file not found: $PfxPath"
 }
 
-$cert = Import-PfxCertificate -FilePath $PfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $PfxPassword
-if (-not $cert) {
-    throw 'Failed to import code-signing certificate from PFX.'
+$cert = $null
+$pfxPasswordBstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($PfxPassword)
+try {
+    $pfxPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pfxPasswordBstr)
+    $x509Flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+    $x509Flags = $x509Flags -bor [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+        $PfxPath,
+        $pfxPasswordPlain,
+        $x509Flags
+    )
+}
+catch {
+    throw "Failed to load code-signing certificate from PFX '$PfxPath': $_"
+}
+finally {
+    if ($pfxPasswordBstr -ne [IntPtr]::Zero) {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pfxPasswordBstr)
+    }
+}
+
+if ($null -eq $cert) {
+    throw 'Failed to load code-signing certificate from PFX.'
 }
 if (-not $cert.HasPrivateKey) {
-    throw 'Imported certificate does not include a private key.'
+    throw 'Loaded certificate does not include a private key.'
 }
 
 $filesToSign = @(Get-ChildItem -LiteralPath $ModuleRoot -Recurse -File | Where-Object {
-    $_.Extension -in @('.ps1', '.psm1', '.psd1')
-})
+        $_.Extension -in @('.ps1', '.psm1', '.psd1')
+    })
 
 if ($filesToSign.Count -eq 0) {
     throw "No signable files found under: $ModuleRoot"
 }
 
 foreach ($file in $filesToSign) {
-    $signature = Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert -HashAlgorithm 'SHA256' -TimestampServer $TimestampServer -IncludeChain 'NotRoot'
+    $signatureParams = @{
+        FilePath        = $file.FullName
+        Certificate     = $cert
+        HashAlgorithm   = 'SHA256'
+        TimestampServer = $TimestampServer
+        IncludeChain    = 'NotRoot'
+    }
+    $signature = Set-AuthenticodeSignature @signatureParams
     if ($signature.Status -ne 'Valid') {
         throw "Signing failed for '$($file.FullName)' with status '$($signature.Status)'."
     }
@@ -56,4 +83,4 @@ foreach ($file in $filesToSign) {
     }
 }
 
-Write-Host "Signed $($filesToSign.Count) files under $ModuleRoot"
+Write-Output "Signed $($filesToSign.Count) files under $ModuleRoot"

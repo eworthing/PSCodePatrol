@@ -56,21 +56,7 @@ jobs:
           Test-ModuleManifest -Path ./PSCodePatrol.psd1 | Out-Null
           ./tools/Test-ExportConsistency.ps1
 
-          $targets = @(
-            './PSCodePatrol.psm1'
-            './Private'
-            './Rules'
-          )
-
-          $results = foreach ($target in $targets) {
-            Invoke-ScriptAnalyzer -Path $target -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
-          }
-          $errors = @($results | Where-Object Severity -eq 'Error')
-
-          if ($errors.Count -gt 0) {
-            $errors | Format-Table -AutoSize | Out-String | Write-Host
-            throw 'PSScriptAnalyzer reported error-level findings.'
-          }
+          ./tools/Invoke-StrictScriptAnalyzer.ps1 -Targets @('./PSCodePatrol.psm1', './Private', './Rules', './tools') -SettingsPath ./PSScriptAnalyzerSettings.psd1
 
           Invoke-Pester -Path ./Tests -CI -Output Detailed
 

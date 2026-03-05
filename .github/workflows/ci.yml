@@ -41,24 +41,10 @@ jobs:
         run: |
           ./tools/Test-ExportConsistency.ps1
 
-      - name: PSScriptAnalyzer (fail on Error)
+      - name: PSScriptAnalyzer (strict: fail on any finding)
         shell: pwsh
         run: |
-          $targets = @(
-            './PSCodePatrol.psm1'
-            './Private'
-            './Rules'
-          )
-
-          $results = foreach ($target in $targets) {
-            Invoke-ScriptAnalyzer -Path $target -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
-          }
-          $errors = @($results | Where-Object Severity -eq 'Error')
-
-          if ($errors.Count -gt 0) {
-            $errors | Format-Table -AutoSize | Out-String | Write-Host
-            throw 'PSScriptAnalyzer reported error-level findings.'
-          }
+          ./tools/Invoke-StrictScriptAnalyzer.ps1 -Targets @('./PSCodePatrol.psm1', './Private', './Rules', './tools') -SettingsPath ./PSScriptAnalyzerSettings.psd1
 
       - name: Run Pester tests
         shell: pwsh

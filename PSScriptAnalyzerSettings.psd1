@@ -1,10 +1,10 @@
 @{
-    Severity     = @('Error', 'Warning', 'Information')
-    CustomRulePath = @(
+    Severity            = @('Error', 'Warning', 'Information')
+    CustomRulePath      = @(
         './PSCodePatrol.psm1'
     )
     IncludeDefaultRules = $true
-    IncludeRules = @(
+    IncludeRules        = @(
         # --- Default rules (always-on) ---
         'PSAvoidAssignmentToAutomaticVariable'
         'PSAvoidDefaultValueForMandatoryParameter'
@@ -85,7 +85,7 @@
         'Measure-AvoidEnvPlatformSpecificVariable'
         'Measure-RequireConvertToJsonDepth'
     )
-    Rules        = @{
+    Rules               = @{
         # ── Profile discovery ──
         # To list installed compatibility-rule profiles on your system, run:
         #   Get-ChildItem "$((Get-Module PSScriptAnalyzer -ListAvailable).ModuleBase)/PSCompatibilityCollector/profiles"

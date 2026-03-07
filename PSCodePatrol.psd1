@@ -48,7 +48,7 @@
             )
             ProjectUri   = 'https://github.com/eworthing/PSCodePatrol'
             LicenseUri   = 'https://github.com/eworthing/PSCodePatrol/blob/main/LICENSE'
-            ReleaseNotes = 'See CHANGELOG.md in the project repository.'
+            ReleaseNotes = 'Initial stable release with eight custom PSScriptAnalyzer rules, strict CI validation, and signed PSGallery publishing.'
         }
     }
 }

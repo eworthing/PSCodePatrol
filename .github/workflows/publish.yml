@@ -123,21 +123,24 @@ jobs:
       - name: Post-publish smoke check
         shell: pwsh
         run: |
+          $manifest = Import-PowerShellDataFile -Path ./out/PSCodePatrol/PSCodePatrol.psd1
+          $expectedVersion = [version]$manifest.ModuleVersion
           $result = $null
-          for ($i = 1; $i -le 8; $i++) {
+          for ($i = 1; $i -le 15; $i++) {
             try {
-              $result = Find-Module -Name PSCodePatrol -Repository PSGallery -ErrorAction Stop
-              if ($null -ne $result) {
+              $candidate = Find-Module -Name PSCodePatrol -Repository PSGallery -ErrorAction Stop
+              if ($null -ne $candidate -and [version]$candidate.Version -eq $expectedVersion) {
+                $result = $candidate
                 break
               }
             }
-            catch {
-              Start-Sleep -Seconds 20
-            }
+            catch { }
+
+            Start-Sleep -Seconds 20
           }
 
           if ($null -eq $result) {
-            throw 'Unable to find PSCodePatrol in PSGallery after publish.'
+            throw "Unable to find PSCodePatrol version $expectedVersion in PSGallery after publish."
           }
 
           $result | Format-List Name, Version, Repository

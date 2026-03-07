@@ -8,7 +8,7 @@ $Rules   = @(Get-ChildItem -Path "$PSScriptRoot/Rules/*.ps1"   -ErrorAction Sile
 
 foreach ($file in @($Private + $Rules)) {
     try { . $file.FullName }
-    catch { Write-Error -Message "Failed to import $($file.FullName): $_" }
+    catch { throw "Failed to import $($file.FullName): $($_.Exception.Message)" }
 }
 
 Export-ModuleMember -Function $Rules.BaseName

@@ -22,7 +22,7 @@ Before tagging, ensure CI is green and run locally when possible:
 ```powershell
 Test-ModuleManifest -Path ./PSCodePatrol.psd1
 ./tools/Test-ExportConsistency.ps1
-$targets = './PSCodePatrol.psm1', './Private', './Rules'
+$targets = './PSCodePatrol.psm1', './Private', './Rules', './tools'
 $results = foreach ($target in $targets) { Invoke-ScriptAnalyzer -Path $target -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 }
 $results | Where-Object Severity -eq 'Error'
 Invoke-Pester -Path ./Tests -CI -Output Detailed

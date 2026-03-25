@@ -84,6 +84,8 @@
         'Measure-AvoidArrayAdditionInLoop'
         'Measure-AvoidEnvPlatformSpecificVariable'
         'Measure-RequireConvertToJsonDepth'
+        'Measure-AvoidUnintentionalOutput'
+        'Measure-RequireErrorActionForTryCatch'
     )
     Rules               = @{
         # ── Profile discovery ──

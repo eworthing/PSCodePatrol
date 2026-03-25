@@ -27,6 +27,8 @@
         'Measure-AvoidArrayAdditionInLoop'
         'Measure-AvoidEnvPlatformSpecificVariable'
         'Measure-RequireConvertToJsonDepth'
+        'Measure-AvoidUnintentionalOutput'
+        'Measure-RequireErrorActionForTryCatch'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
